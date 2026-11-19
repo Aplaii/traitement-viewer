@@ -1,0 +1,60 @@
+# Profil d'entraînement complet (défaut). Voir training.fast.yaml pour la CI et les tests.
+seed: 42
+# core_dsm_bzd : core + critères DSM-5 + Fagerström + benzodiazépine avant l'entrée
+# (voir le schéma) ; core et core_dsm restent disponibles.
+feature_set: core_dsm_bzd
+n_jobs: -1
+
+cv:
+  outer_splits: 5
+  outer_repeats: 5
+  inner_splits: 5
+  crossfit_splits: 5
+
+# Grille « riche » : un peu meilleure que la grille réduite sur 4 sorties sur 5 en CV
+# imbriquée (la sélection du candidat est refaite dans chaque pli : pas d'optimisme).
+candidates:
+  classification:
+    logistic: {C: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0], class_weight: [balanced]}
+    hgb:
+      max_depth: [2, 3, 4]
+      learning_rate: [0.05, 0.1]
+      max_iter: [150, 300]
+      min_samples_leaf: [10, 20]
+      l2_regularization: [1.0]
+      class_weight: [balanced]
+    # Forêts aléatoires (famille « forest ») : essayées le 10/11/2026 en CV imbriquée 5x5,
+    # rarement retenues et sans gain (molécule un peu moins bonne) ; laissées en option :
+    # forest: {n_estimators: [300], min_samples_leaf: [5, 10]}
+  regression:
+    ridge: {alpha: [0.1, 0.3, 1.0, 3.0, 10.0, 30.0]}
+    hgb:
+      max_depth: [2, 3, 4]
+      loss: [absolute_error, squared_error]
+      min_samples_leaf: [10, 20]
+      learning_rate: [0.05]
+      max_iter: [150]
+
+# Choisie par log-loss en CV interne ; isotonic refusée si n < 1000.
+calibration: {methods: [none, sigmoid], cv: 3}
+selection: {classification: neg_log_loss, regression: neg_mean_absolute_error, one_se_rule: true}
+conformal: {alpha: 0.10, class_conditional: false, score: lac}
+treatment_threshold: {strategy: target_sensitivity, value: 0.90, grey_zone: 0.10}
+abstention:
+  min_top_prob_high: 0.70
+  max_rel_width_moderate: 1.5
+  max_rel_width_low: 3.0
+  max_missing_high: 0.10
+  max_missing_low: 0.30
+ood: {range_quantiles: [0.01, 0.99], novelty: lof, lof_n_neighbors: 20, novelty_quantile: 0.01}
+bootstrap: {n_resamples: 1000, ci: 0.95}
+rounding: {dose_mg: 5, duration_days: 1}
+consistency: {severe_untreated_min_prob: 0.30}
+# Classe prédite de la sévérité : argmax de p / prévalence (décision « balanced »).
+decision: {prior_corrected: [severity]}
+# Sévérité en deux étages : P(traité) x P(sévérité | traité), le reste allant à « léger ».
+# Un sevrage non traité est presque toujours léger ; « léger » mélange donc des patients
+# non traités et des patients traités dont le score est resté bas (voir la méthodologie).
+two_stage: {severity: {gate: treatment, equals: "yes", otherwise: low}}
+explain: {top_k: 8, permutation_repeats: 10}
+evaluation: {min_class_count_warning: 10}

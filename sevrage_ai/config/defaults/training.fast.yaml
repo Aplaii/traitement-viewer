@@ -1,0 +1,49 @@
+# Profil rapide et déterministe pour la CI et les tests d'intégration :
+# 3x1 CV externe, 3 plis internes, 3 plis de cross-fit, un candidat par famille,
+# bootstrap 100, n_jobs 1.
+seed: 42
+feature_set: core
+n_jobs: 1
+
+cv:
+  outer_splits: 3
+  outer_repeats: 1
+  inner_splits: 3
+  crossfit_splits: 3
+
+candidates:
+  classification:
+    logistic: {C: [0.3], class_weight: [balanced]}
+    hgb:
+      max_depth: [2]
+      learning_rate: [0.05]
+      max_iter: [100]
+      min_samples_leaf: [10]
+      l2_regularization: [1.0]
+      class_weight: [balanced]
+  regression:
+    ridge: {alpha: [1.0]}
+    hgb:
+      max_depth: [2]
+      loss: [absolute_error]
+      min_samples_leaf: [10]
+      max_iter: [100]
+
+calibration: {methods: [none, sigmoid], cv: 3}
+selection: {classification: neg_log_loss, regression: neg_mean_absolute_error, one_se_rule: true}
+conformal: {alpha: 0.10, class_conditional: false, score: lac}
+treatment_threshold: {strategy: target_sensitivity, value: 0.90, grey_zone: 0.10}
+abstention:
+  min_top_prob_high: 0.70
+  max_rel_width_moderate: 1.5
+  max_rel_width_low: 3.0
+  max_missing_high: 0.10
+  max_missing_low: 0.30
+ood: {range_quantiles: [0.01, 0.99], novelty: lof, lof_n_neighbors: 10, novelty_quantile: 0.01}
+bootstrap: {n_resamples: 100, ci: 0.95}
+rounding: {dose_mg: 5, duration_days: 1}
+consistency: {severe_untreated_min_prob: 0.30}
+# Classe prédite de la sévérité : argmax de p / prévalence (décision « balanced »).
+decision: {prior_corrected: [severity]}
+explain: {top_k: 8, permutation_repeats: 3}
+evaluation: {min_class_count_warning: 10}

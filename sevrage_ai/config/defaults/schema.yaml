@@ -1,0 +1,731 @@
+# Schéma des données : dictionnaire, correspondance des colonnes, cibles et règles.
+# Source unique de vérité (design D2). Aucune colonne n'est codée en dur dans le code.
+#
+# Données : export REDCap « Challenge IA addicto » (études COBIOM / METADDICT), un séjour
+# de sevrage par patient. Les noms de colonnes sont ceux de l'export ; la comparaison ignore
+# la casse et les espaces multiples ou retours à la ligne des en-têtes REDCap.
+#
+# Conventions REDCap de cet export :
+#   * cases à cocher « (choice=...) » : Checked / Unchecked ;
+#   * antécédents à trois cases OUI / NON / NON CONNU : on lit la case « OUI »
+#     (1 = antécédent documenté, 0 = non documenté ou absent) ;
+#   * questions OUI / NON ; toxiques urinaires Positif / Négatif.
+#
+# À VALIDER AVEC UN RÉFÉRENT CLINIQUE avant toute utilisation : la définition de la
+# sévérité, la table d'équivalence des doses et les motifs d'analyse du texte libre.
+schema_version: "1.0"
+
+dataset:
+  description: >-
+    Patients hospitalisés pour sevrage alcoolique (COBIOM / METADDICT), export REDCap
+    « Challenge IA addicto », n = 318.
+  id_column: "Numéro METADDICT"
+  group_column: null
+  metadata_columns: ["__synthetic__"]
+  csv: {sep: auto, decimal: auto, encoding: auto}
+  na_values: ["", "NA", "N/A", "ND", "NR", "NC", "DM", "?", "-", "inconnu", "NON CONNU",
+              "NA/DM ?", "hemolysé", "hémolysé", "LH", "PRNC", "nan"]
+  censored_numbers: bound
+
+feature_groups:
+  demographics: "Démographie"
+  consumption: "Consommation d'alcool"
+  withdrawal_history: "Antécédents de sevrage"
+  medical_history: "Antécédents médicaux"
+  psychiatry: "Psychiatrie"
+  treatments: "Traitements avant l'hospitalisation"
+  co_use: "Tabac et autres substances"
+  toxicology: "Dépistage urinaire à l'admission"
+  biology: "Biologie à l'admission"
+  outcomes: "Évolution pendant le sevrage (cibles, jamais prédicteurs)"
+
+feature_sets:
+  # Jeu de base : ~16 variables, compte tenu de n ≈ 300 (règle ~10 événements par variable).
+  core: [age, sex, bmi, daily_alcohol_g, abstinence_days, breath_alcohol, prior_withdrawals,
+         prior_seizure, prior_dt, cirrhosis, urine_bzd, ggt, asat, platelets, sodium, potassium]
+  # Jeu retenu du 06/10 au 15/10/2026 : core + 2 critères DSM-5 + Fagerström,
+  # en tête du criblage multi-méthodes pour la durée et la dose. En CV imbriquée 5x5 (grille
+  # riche), par rapport à core : sévérité et durée meilleures, traitement et molécule
+  # inchangés. Choix fait après criblage sur toutes les données : léger optimisme possible.
+  core_dsm: [age, sex, bmi, daily_alcohol_g, abstinence_days, breath_alcohol, prior_withdrawals,
+             dsm5_withdrawal_symptoms, dsm5_criteria, fagerstrom, prior_seizure, prior_dt,
+             cirrhosis, urine_bzd, ggt, asat, platelets, sodium, potassium]
+  # Jeu par défaut depuis le 15/10/2026 : core_dsm + benzodiazépine prise avant l'entrée.
+  # L'analyse des données montre que, quand le Cushman reste sous 5, 75 % des patients déjà
+  # sous benzodiazépine sont traités contre 30 % des autres (relais d'un traitement
+  # existant, par exemple prazépam -> oxazépam). En CV imbriquée 5x5 : molécule un peu
+  # meilleure (AUC 0,804 -> 0,813), le reste identique ; gains dans le bruit, aucune perte.
+  core_dsm_bzd: [age, sex, bmi, daily_alcohol_g, abstinence_days, breath_alcohol, prior_withdrawals,
+                 dsm5_withdrawal_symptoms, dsm5_criteria, fagerstrom, prior_seizure, prior_dt,
+                 cirrhosis, urine_bzd, prior_bzd_treatment, ggt, asat, platelets, sodium, potassium]
+  # Sans biologie : utilisable dès l'entretien d'entrée.
+  clinical: [age, sex, bmi, daily_alcohol_g, drinking_days_4w, abstinence_days, breath_alcohol,
+             prior_withdrawals, prior_seizure, prior_dt, epilepsy, cirrhosis,
+             psychiatric_disorder, prior_bzd_treatment, cannabis, cocaine, tobacco]
+  extended: "*"
+
+features:
+  # ------------------------------------------------------------------ démographie
+  - name: age
+    label: "Âge"
+    source_column: "Age à la date d'inclusion (COBIOM)"
+    kind: numeric
+    unit: "ans"
+    valid_range: [16, 100]
+    group: demographics
+  - name: sex
+    label: "Sexe"
+    source_column: "Sexe"
+    kind: categorical
+    categories: [male, female]
+    value_mapping: {Masculin: male, Féminin: female, H: male, M: male, F: female}
+    group: demographics
+  - name: bmi
+    label: "IMC"
+    source_column: "Indice de masse corporelle (IMC) (kg/m²)"
+    kind: numeric
+    unit: "kg/m²"
+    valid_range: [10, 70]
+    group: demographics
+  - name: education_years
+    label: "Années de scolarité"
+    source_column: "Nombre d'années de scolarité (v070825) CP 1 6ème 6 3ème 9 CAP- BEP 11 Terminale 12 Bac+2 14 Licence 15 Master 2 17 Doctorat 20"
+    kind: numeric
+    unit: "ans"
+    valid_range: [0, 25]
+    group: demographics
+  - name: unemployed
+    label: "Sans emploi"
+    source_column: "Situation professionnelle (choice=Sans emploi)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: demographics
+  - name: single
+    label: "Célibataire"
+    source_column: "Situation personnelle (choice=Célibataire)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: demographics
+
+  # ------------------------------------------------------------------ consommation
+  - name: daily_alcohol_g
+    label: "Consommation moyenne (mois précédent)"
+    source_column: "Nombre moyen d'unités d'alcool (U) pur par jour (durant le mois précédant le sevrage) 1U = 10 grammes d'alcool pur Arrondir à l'unité d'alcool supérieure par ex. si patient déclare 9-10 unités -mettre 10"
+    kind: numeric
+    unit: "g/j"
+    scale: 10.0            # unités d'alcool (10 g) -> grammes
+    valid_range: [0, 1000]
+    monotonic: 1
+    group: consumption
+  - name: drinking_days_4w
+    label: "Jours de consommation (4 dernières semaines)"
+    source_column: "Nombre de jours avec consommation d'alcool durant les 4 dernières semaines ?"
+    kind: numeric
+    unit: "jours"
+    valid_range: [0, 31]
+    group: consumption
+  - name: units_per_drinking_day
+    label: "Unités par jour de consommation"
+    source_column: "Nombre d'unités alcool bues lors des jours de consommation ?"
+    kind: numeric
+    unit: "UA"
+    valid_range: [0, 100]
+    group: consumption
+  - name: heavy_drinking_days
+    label: "Jours de consommation élevée (mois précédent)"
+    source_column: "Nombre de jours de consommation élevée durant le mois précédant le sevrage : > 6 unités d'alcool pour les hommes > 4 unités d'alcool pour les femmes Faire le calcul pour 4 semaines"
+    kind: numeric
+    unit: "jours"
+    valid_range: [0, 31]
+    group: consumption
+  - name: abstinence_days
+    label: "Abstinence au moment du prélèvement"
+    source_column: "Durée d'abstinence au moment du prélèvement (en jour(s))"
+    kind: numeric
+    unit: "jours"
+    valid_range: [0, 365]
+    group: consumption
+    description: "Délai depuis le dernier verre au moment du bilan d'entrée."
+  - name: breath_alcohol
+    label: "Éthylométrie à l'entrée"
+    source_column: "Ethylométrie 1ère mesure par éthylomètre (g/L)"
+    kind: numeric
+    unit: "g/L"
+    valid_range: [0, 6]
+    group: consumption
+  - name: age_first_drink
+    label: "Âge du premier verre"
+    source_column: "Age premier verre d'alcool ? (en années)"
+    kind: numeric
+    unit: "ans"
+    valid_range: [2, 80]
+    group: consumption
+  - name: dsm5_criteria
+    label: "Critères DSM-5 (trouble de l'usage)"
+    source_column: "Nombre de critères DSM-5"
+    kind: numeric
+    valid_range: [0, 11]
+    group: consumption
+  # Critères DSM-5 individuels (retenus par le criblage multi-méthodes du 29/09/2026).
+  - name: dsm5_withdrawal_symptoms
+    label: "DSM-5 : symptômes de sevrage"
+    source_column: "Symptômes de sevrage"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: consumption
+  - name: dsm5_craving
+    label: "DSM-5 : craving"
+    source_column: "Craving"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: consumption
+  - name: dsm5_continued_use
+    label: "DSM-5 : poursuite malgré les conséquences"
+    source_column: "Poursuite malgré les conséquences physiques ou psychologiques"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: consumption
+  - name: audit_score
+    label: "Score AUDIT"
+    source_column: "Score Audit (/40)"
+    kind: numeric
+    valid_range: [0, 40]
+    group: consumption
+
+  # ------------------------------------------------------------------ antécédents de sevrage
+  - name: prior_withdrawals
+    label: "Sevrages antérieurs"
+    source_column: "Nombre total de sevrages 'Alcool' déjà réalisés"
+    kind: numeric
+    valid_range: [0, 100]
+    group: withdrawal_history
+  - name: prior_hospital_withdrawal
+    label: "Sevrage hospitalier antérieur"
+    source_column: "Sevrages hospitaliers / ambulatoires (choice=Hospitaliers)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: withdrawal_history
+  - name: prior_outpatient_withdrawal
+    label: "Sevrage ambulatoire antérieur"
+    source_column: "Sevrages hospitaliers / ambulatoires (choice=Ambulatoires)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: withdrawal_history
+  - name: prior_seizure
+    label: "ATCD de crise convulsive de sevrage"
+    source_column: "Crise convulsive de sevrage (choice=OUI)"
+    negative_column: "Crise convulsive de sevrage (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    monotonic: 1
+    group: withdrawal_history
+  - name: prior_dt
+    label: "ATCD de delirium tremens"
+    source_column: "Delirium tremens (choice=OUI)"
+    negative_column: "Delirium tremens (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    monotonic: 1
+    group: withdrawal_history
+
+  # ------------------------------------------------------------------ antécédents médicaux
+  - name: cirrhosis
+    label: "Cirrhose"
+    source_column: "Cirrhose (choice=OUI)"
+    negative_column: "Cirrhose (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: steatosis
+    label: "Stéatose"
+    source_column: "Stéatose (choice=OUI)"
+    negative_column: "Stéatose (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: hepatic_encephalopathy
+    label: "Encéphalopathie hépatique"
+    source_column: "Encéphalopathie hépatique (choice=OUI)"
+    negative_column: "Encéphalopathie hépatique (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: epilepsy
+    label: "Épilepsie"
+    source_column: "Epilepsie (choice=OUI)"
+    negative_column: "Epilepsie (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: polyneuropathy
+    label: "Polynévrite"
+    source_column: "Polynevrite (choice=OUI)"
+    negative_column: "Polynevrite (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: neurological_disease
+    label: "Pathologie neurologique"
+    source_column: "Pathologie neurologique (AVC, traumatisme crânien, antécédent neurochirurgical, sclérose en plaques...) (choice=OUI)"
+    negative_column: "Pathologie neurologique (AVC, traumatisme crânien, antécédent neurochirurgical, sclérose en plaques...) (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: sleep_disorder
+    label: "Trouble du sommeil"
+    source_column: "Trouble du sommeil (choice=OUI)"
+    negative_column: "Trouble du sommeil (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: diabetes
+    label: "Diabète"
+    source_column: "Diabète (choice=OUI)"
+    negative_column: "Diabète (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: cardiac_disease
+    label: "Pathologie cardiaque"
+    source_column: "Pathologie cardiaque (choice=OUI)"
+    negative_column: "Pathologie cardiaque (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: vascular_disease
+    label: "Pathologie vasculaire"
+    source_column: "Pathologie vasculaire (choice=OUI)"
+    negative_column: "Pathologie vasculaire (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+  - name: respiratory_disease
+    label: "Pathologie respiratoire"
+    source_column: "Pathologie respiratoire (choice=OUI)"
+    negative_column: "Pathologie respiratoire (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: medical_history
+
+  # ------------------------------------------------------------------ psychiatrie
+  - name: psychiatric_disorder
+    label: "Trouble psychiatrique associé"
+    source_column: "Trouble psychiatrique : (choice=Non)"
+    kind: binary
+    value_mapping: {Checked: 0, Unchecked: 1}   # la case cochée est « Non »
+    group: psychiatry
+  - name: depression
+    label: "Épisode dépressif majeur"
+    source_column: "Trouble psychiatrique : (choice=Episode dépressif majeur)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: psychiatry
+  - name: suicide_risk
+    label: "Risque suicidaire"
+    source_column: "Trouble psychiatrique : (choice=Risque suicidaire)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: psychiatry
+  - name: anxiety_disorder
+    label: "Anxiété généralisée"
+    source_column: "Trouble psychiatrique : (choice=Anxiété généralisée)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: psychiatry
+  - name: family_aud
+    label: "ATCD familial de trouble de l'usage d'alcool"
+    source_column: "Antécédents de troubles de l'usage d'alcool familiaux (choice=OUI)"
+    negative_column: "Antécédents de troubles de l'usage d'alcool familiaux (choice=NON)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    group: psychiatry
+  - name: had_anxiety
+    label: "HAD anxiété"
+    source_column: "Score HAD Anxiété Visite initiale"
+    kind: numeric
+    valid_range: [0, 21]
+    group: psychiatry
+  - name: had_depression
+    label: "HAD dépression"
+    source_column: "Score HAD Dépression Visite initiale"
+    kind: numeric
+    valid_range: [0, 21]
+    group: psychiatry
+
+  # ------------------------------------------------------------------ traitements à l'entrée
+  - name: prior_bzd_treatment
+    label: "Benzodiazépine avant l'entrée"
+    source_column: "benzodiazépine"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: treatments
+  - name: antidepressant
+    label: "Antidépresseur avant l'entrée"
+    source_column: "Antidépresseur"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: treatments
+  - name: neuroleptic
+    label: "Neuroleptique avant l'entrée"
+    source_column: "Neuroleptique"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: treatments
+  - name: addiction_treatment
+    label: "Traitement addictolytique avant l'entrée"
+    source_column: "Traitement addictolytique"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: treatments
+
+  # ------------------------------------------------------------------ tabac, autres substances
+  - name: tobacco
+    label: "Tabac"
+    source_column: "Habitudes tabagiques"
+    kind: categorical
+    categories: [never, former, current]
+    value_mapping: {Non fumeur: never, Ancien fumeur: former, Fumeur: current}
+    group: co_use
+  - name: fagerstrom
+    label: "Fagerström simplifié"
+    source_column: "Score de Fagerström simplifié"
+    kind: numeric
+    valid_range: [0, 10]
+    group: co_use
+  - name: cannabis
+    label: "Cannabis (dernier mois)"
+    source_column: "Consommation de cannabis"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: co_use
+  - name: heroin
+    label: "Héroïne (dernier mois)"
+    source_column: "Consommation d'héroïne"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: co_use
+  - name: cocaine
+    label: "Cocaïne / crack (dernier mois)"
+    source_column: "Consommation de cocaïne et/ou de crack"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: co_use
+  - name: medication_misuse
+    label: "Mésusage de médicament"
+    source_column: "Mésusage de médicament"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: co_use
+  - name: opioid_analgesics
+    label: "Antalgiques morphiniques"
+    source_column: "Consommation d'antalgiques morphiniques"
+    kind: binary
+    value_mapping: {OUI: 1, NON: 0}
+    group: co_use
+
+  # ------------------------------------------------------------------ toxiques urinaires
+  - name: urine_bzd
+    label: "Benzodiazépines urinaires"
+    source_column: "Benzodiazépines"
+    kind: binary
+    value_mapping: {Positif: 1, Négatif: 0}
+    group: toxicology
+  - name: urine_thc
+    label: "THC urinaire"
+    source_column: "THC"
+    kind: binary
+    value_mapping: {Positif: 1, Négatif: 0}
+    group: toxicology
+  - name: urine_alcohol
+    label: "Alcool urinaire"
+    source_column: "Alcool"
+    kind: binary
+    value_mapping: {Positif: 1, Négatif: 0}
+    group: toxicology
+  - name: urine_opiates
+    label: "Opiacés urinaires"
+    source_column: "Opiacés"
+    kind: binary
+    value_mapping: {Positif: 1, Négatif: 0}
+    group: toxicology
+  - name: urine_cocaine
+    label: "Cocaïne urinaire"
+    source_column: "Cocaïne"
+    kind: binary
+    value_mapping: {Positif: 1, Négatif: 0}
+    group: toxicology
+
+  # ------------------------------------------------------------------ biologie d'entrée
+  - {name: sodium, label: "Sodium", source_column: "Sodium (mM)", kind: numeric, unit: "mmol/L", valid_range: [100, 170], group: biology}
+  - {name: potassium, label: "Potassium", source_column: "Potassium (mM)", kind: numeric, unit: "mmol/L", valid_range: [1.5, 9], group: biology}
+  - {name: chloride, label: "Chlore", source_column: "Chlore (mM)", kind: numeric, unit: "mmol/L", valid_range: [70, 140], group: biology}
+  - {name: bicarbonate, label: "Bicarbonates", source_column: "Bicarbonates (mM)", kind: numeric, unit: "mmol/L", valid_range: [5, 50], group: biology}
+  - {name: creatinine, label: "Créatinine", source_column: "Créatinine (µM)", kind: numeric, unit: "µmol/L", valid_range: [10, 1500], group: biology}
+  - {name: egfr, label: "DFG (CKD-EPI)", source_column: "DFG (CKD-EPI) (ml/min/1.73m²)", kind: numeric, unit: "mL/min/1,73 m²", valid_range: [2, 200], group: biology}
+  - {name: urea, label: "Urée", source_column: "Urée (mM)", kind: numeric, unit: "mmol/L", valid_range: [0.3, 60], group: biology}
+  - {name: crp, label: "CRP", source_column: "CRP (mg/l)", kind: numeric, unit: "mg/L", valid_range: [0, 500], group: biology}
+  - {name: tsh, label: "TSH", source_column: "TSH (mUI/L)", kind: numeric, unit: "mUI/L", valid_range: [0, 100], group: biology}
+  - {name: magnesium, label: "Magnésium", source_column: "Magnésium (mmol/L)", kind: numeric, unit: "mmol/L", valid_range: [0.1, 3], group: biology}
+  - {name: phosphorus, label: "Phosphore", source_column: "Phosphore (mM)", kind: numeric, unit: "mmol/L", valid_range: [0.1, 5], group: biology}
+  - {name: albumin, label: "Albumine", source_column: "Albumine (g/L)", kind: numeric, unit: "g/L", valid_range: [10, 70], group: biology}
+  - {name: alp, label: "PAL", source_column: "PAL (U/L)", kind: numeric, unit: "UI/L", valid_range: [10, 3000], group: biology}
+  - {name: ggt, label: "GGT", source_column: "GGT (U/L)", kind: numeric, unit: "UI/L", valid_range: [1, 10000], group: biology}
+  - {name: asat, label: "ASAT", source_column: "TGO/ASAT (U/L)", kind: numeric, unit: "UI/L", valid_range: [1, 10000], group: biology}
+  - {name: alat, label: "ALAT", source_column: "TGP/ALAT (U/L)", kind: numeric, unit: "UI/L", valid_range: [1, 10000], group: biology}
+  - {name: asat_alat_ratio, label: "Rapport ASAT/ALAT", source_column: "Rapport ASAT/ALAT", kind: numeric, valid_range: [0.05, 20], group: biology}
+  - {name: bilirubin, label: "Bilirubine totale", source_column: "Bilirubine totale (µM)", kind: numeric, unit: "µmol/L", valid_range: [0, 800], group: biology}
+  - {name: folate, label: "Folates (B9)", source_column: "Vitamine B9 (folates) (nmol/L)", kind: numeric, unit: "nmol/L", valid_range: [0, 200], group: biology}
+  - {name: vitamin_b12, label: "Vitamine B12", source_column: "Vitamine B12 (pmol/L)", kind: numeric, unit: "pmol/L", valid_range: [0, 5000], group: biology}
+  - {name: vitamin_d, label: "Vitamine D", source_column: "Vitamine D (µg/L)", kind: numeric, unit: "µg/L", valid_range: [0, 250], group: biology}
+  - {name: prothrombin, label: "Taux de prothrombine", source_column: "Taux de prothrombine (TP) (%)", kind: numeric, unit: "%", valid_range: [5, 150], group: biology}
+  - {name: hemoglobin, label: "Hémoglobine", source_column: "Hémoglobine (g/dL)", kind: numeric, unit: "g/dL", valid_range: [3, 25], group: biology}
+  - {name: red_cells, label: "Hématies", source_column: "Hématies (T/L)", kind: numeric, unit: "T/L", valid_range: [1, 8], group: biology}
+  - {name: hematocrit, label: "Hématocrite", source_column: "Hématocrite (%)", kind: numeric, unit: "%", valid_range: [10, 70], group: biology}
+  - {name: mcv, label: "VGM", source_column: "Volume globulaire moyen (VGM, fl)", kind: numeric, unit: "fL", valid_range: [50, 150], group: biology}
+  - {name: platelets, label: "Plaquettes", source_column: "Plaquettes (G/L)", kind: numeric, unit: "G/L", valid_range: [5, 2000], group: biology}
+  - {name: leukocytes, label: "Leucocytes", source_column: "Leucocytes (G/L)", kind: numeric, unit: "G/L", valid_range: [0.5, 100], group: biology}
+  - {name: nlr, label: "Rapport neutrophiles/lymphocytes", source_column: "Ratio Neutrophiles / Lymphocytes", kind: numeric, valid_range: [0, 100], group: biology}
+  - {name: fib4, label: "Score FIB-4", source_column: "Score Fib -4", kind: numeric, valid_range: [0, 100], group: biology}
+  - {name: peth, label: "Phosphatidyléthanol 16:0/18:1", source_column: "Phosphatidyléthanol 16:0/18:1 (µg/L)", kind: numeric, unit: "µg/L", valid_range: [0, 10000], group: biology}
+  - {name: homocysteine, label: "Homocystéine", source_column: "Homocystéine (en µmol/L)", kind: numeric, unit: "µmol/L", valid_range: [0, 500], group: biology}
+
+  # ------------------------------------------------------------------ évolution (post-admission)
+  # Mesurées PENDANT le sevrage : elles servent à dériver la sévérité, jamais de prédicteurs.
+  - name: cushman_max
+    label: "Score de Cushman maximal"
+    source_column: "Score de Cushman max au cours du sevrage"
+    kind: numeric
+    valid_range: [0, 21]
+    timing: post_admission
+    group: outcomes
+  - name: ciwa_max
+    label: "Score CIWA-Ar maximal"
+    source_column: "Score CIWA Max"
+    kind: numeric
+    valid_range: [0, 67]
+    timing: post_admission
+    group: outcomes
+  - name: complications_any
+    label: "Complication du sevrage"
+    source_column: "Complications du sevrage"
+    kind: binary
+    value_mapping: {Oui: 1, non: 0}
+    timing: post_admission
+    group: outcomes
+  - name: complication_seizure
+    label: "Crise convulsive pendant le sevrage"
+    source_column: "Si oui, quelle(s) complication(s) ? (choice=Crise convulsive)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    timing: post_admission
+    group: outcomes
+  - name: complication_dt
+    label: "Delirium tremens pendant le sevrage"
+    source_column: "Si oui, quelle(s) complication(s) ? (choice=Delirium Tremens)"
+    kind: binary
+    value_mapping: {Checked: 1, Unchecked: 0}
+    timing: post_admission
+    group: outcomes
+  - name: hospital_stay_days
+    label: "Durée d'hospitalisation"
+    source_column: "Durée d'hospitalisation (COBIOM)"
+    kind: numeric
+    unit: "jours"
+    valid_range: [0, 400]
+    timing: post_admission
+    group: outcomes
+
+targets:
+  severity:
+    kind: ordinal
+    label: "Sévérité du sevrage"
+    description: >-
+      Dérivée de l'évolution : sévère ou compliqué si crise convulsive ou delirium tremens
+      pendant le sevrage, ou score de Cushman maximal >= 7 ; modéré si Cushman max 5-6 ;
+      léger sinon. Seuils choisis selon la pratique du service (BZD quasi systématiques à
+      partir de 5) : À VALIDER cliniquement.
+    classes: [low, moderate, high]
+    class_labels: {low: "Léger", moderate: "Modéré", high: "Sévère ou compliqué"}
+    source:
+      derived:
+        - when:
+            any:
+              - {feature: complication_seizure, op: eq, value: 1}
+              - {feature: complication_dt, op: eq, value: 1}
+              - {feature: cushman_max, op: gte, value: 7}
+          then: high
+        - when: {feature: cushman_max, op: gte, value: 5}
+          then: moderate
+        - else: low
+      on_missing: undetermined
+  treatment:
+    kind: binary
+    label: "Traitement par benzodiazépine"
+    description: "Benzodiazépines administrées au cours du sevrage (oui / non)."
+    classes: ["no", "yes"]
+    positive_class: "yes"
+    class_labels: {"no": "Non", "yes": "Oui"}
+    source:
+      column: "Benzodiazépines administrées au cours du sevrage"
+      value_mapping: {OUI: "yes", NON: "no"}
+  molecule:
+    kind: multiclass
+    label: "Molécule"
+    description: >-
+      Première benzodiazépine citée dans le texte « Précisions concernant la
+      benzodiazépine administrée » (choix initial). Le prazépam, poursuivi quand il était
+      pris avant l'entrée puis relayé par un équivalent d'oxazépam, compte comme oxazépam.
+      Classes rares regroupées en « autre ».
+    conditional_on: {target: treatment, equals: "yes"}
+    classes: null
+    min_class_count: 8
+    class_labels: {diazepam: "Diazépam (Valium)", oxazepam: "Oxazépam (Séresta)",
+                   lorazepam: "Lorazépam (Témesta)", prazepam: "Prazépam (Lysanxia)",
+                   other: "Autre"}
+    source:
+      column: "Précisions concernant la benzodiazépine administrée et la dose totale durant le sevrage"
+      parser: prescription_molecule
+      # Réponse de l'équipe : prazépam = traitement d'avant l'entrée relayé par l'oxazépam.
+      value_mapping: {prazepam: oxazepam}
+      missing_patterns:
+        - "ttt habituel|traitement habituel"
+        - "pas de (bzd|benzo)"
+        - "pas mis en place"
+  dose_cumulative:
+    kind: regression
+    label: "Dose totale"
+    description: >-
+      Dose totale de benzodiazépine pendant le sevrage, en mg équivalent diazépam, lue dans
+      le texte libre. Manquante si le sevrage n'a pas été terminé dans le service.
+    unit: mg_diazepam_eq
+    conditional_on: {target: treatment, equals: "yes"}
+    transform: log1p
+    valid_range: [0, 5000]
+    source:
+      column: "Précisions concernant la benzodiazépine administrée et la dose totale durant le sevrage"
+      parser: prescription_dose
+      missing_patterns:
+        - "ttt habituel|traitement habituel"
+        - "pas de (bzd|benzo)"
+        - "pas mis en place"
+        - "mettre"                       # champ non rempli (« METTRE DOSE TOTALE »)
+        - "a revoir"
+        - "^\\s*(na|dm)\\b"              # « NA ... », « DM car ... »
+        - "\\bna\\b"                     # « Seresta, NA dose »
+        - "sortie|depart|parti|non termine|ambulatoire|domicile"   # sevrage incomplet
+  duration_days:
+    kind: regression
+    label: "Durée du traitement"
+    description: >-
+      Nombre de jours jusqu'à la dernière prise de benzodiazépine (sevrage de cette
+      hospitalisation).
+    unit: "jours"
+    conditional_on: {target: treatment, equals: "yes"}
+    transform: log1p
+    valid_range: [0, 60]
+    source:
+      column: "Durée du sevrage réalisé pour cette hospitalisation (en nombre de jours au dernier jour de prise de BZD)"
+      parser: leading_number
+      missing_patterns:
+        - "mettre|a reverifier"
+        - "entre arret"                  # durée depuis l'arrêt de l'alcool, pas des BZD
+        - "post-?cure|domicile|ambulatoire|sorti|parti"
+        - "deja"                         # sevrage déjà commencé ou déjà sevré
+
+# mg de diazépam pour 1 mg de molécule. Oxazépam : rapport 2:1 (20 mg d'oxazépam pour
+# 10 mg de diazépam), validé par l'équipe clinique le 29/09/2026. Autres facteurs à valider.
+dose_equivalence_to_diazepam:
+  diazepam: 1.0
+  oxazepam: 0.5
+  lorazepam: 5.0
+  prazepam: 0.5
+  clorazepate: 0.67
+  alprazolam: 10.0
+  bromazepam: 1.67
+
+# Noms rencontrés dans le texte libre (motifs sans accents, voir l'en-tête du schéma).
+molecule_aliases:
+  diazepam: ["diazepam", "valium"]
+  oxazepam: ["oxazepam", "oxepam", "seresta"]
+  lorazepam: ["lorazepam", "temesta"]
+  prazepam: ["prazepam", "lysanxia"]
+  clorazepate: ["clorazepate", "tranxene"]
+  alprazolam: ["alprazolam", "xanax"]
+  bromazepam: ["bromazepam", "lexomil"]
+
+# Règles cliniques simples comparées au modèle sur les mêmes plis.
+baselines:
+  - {name: "ATCD de delirium tremens", target: severity, positive_class: high,
+     feature: prior_dt, op: gte, threshold: 1}
+  - {name: "ATCD de convulsion de sevrage", target: severity, positive_class: high,
+     feature: prior_seizure, op: gte, threshold: 1}
+  - {name: "Consommation >= 100 g/j", target: treatment, feature: daily_alcohol_g, op: gte,
+     threshold: 100}
+
+anonymization:
+  forbidden_column_patterns:
+    - "(?i)^(nom|pr[ée]nom|name|surname|first ?name|last ?name)\\b"
+    - "(?i)\\bnir\\b|num[ée]ro de s[ée]curit[ée] sociale|\\bssn\\b|\\binsee\\b"
+    - "(?i)date de naissance|naissance|birth|\\bdob\\b|\\bddn\\b"
+    - "(?i)\\badresse\\b|\\baddress\\b|code postal|\\bzip\\b"
+    - "(?i)t[ée]l[ée]phone|\\bt[ée]l\\b|\\bphone\\b|\\bmobile\\b|\\bportable\\b"
+    - "(?i)e-?mail|courriel"
+    - "(?i)\\bipp\\b|\\bnda\\b|num[ée]ro de dossier"
+  scan_values: true
+  high_cardinality_ratio: 0.5
+  min_rows_for_cardinality: 20
+
+# Annotations informatives : elles ne modifient JAMAIS les sorties du modèle.
+safety_rules:
+  - id: hepatic_long_acting
+    level: warning
+    applies_to: treated
+    when:
+      any:
+        - {feature: cirrhosis, op: eq, value: 1}
+        - {feature: hepatic_encephalopathy, op: eq, value: 1}
+        - {feature: bilirubin, op: gte, value: 50}
+        - {feature: prothrombin, op: lte, value: 50}
+    molecule_in: [diazepam, prazepam, clorazepate]
+    message_fr: >-
+      Atteinte hépatique suspectée : une benzodiazépine à demi-vie courte (oxazépam) est
+      habituellement préférée. À vérifier.
+  - id: elderly_long_acting
+    level: info
+    applies_to: treated
+    when: {feature: age, op: gte, value: 70}
+    molecule_in: [diazepam, prazepam, clorazepate]
+    message_fr: >-
+      Patient âgé : risque d'accumulation des benzodiazépines à demi-vie longue. À vérifier.
+  - id: complicated_history_untreated
+    level: warning
+    applies_to: untreated
+    when:
+      any:
+        - {feature: prior_dt, op: eq, value: 1}
+        - {feature: prior_seizure, op: eq, value: 1}
+    message_fr: >-
+      Antécédent de delirium tremens ou de convulsion de sevrage : l'absence de traitement
+      doit être justifiée et la surveillance renforcée.
+  - id: respiratory_disease
+    level: info
+    applies_to: treated
+    when: {feature: respiratory_disease, op: eq, value: 1}
+    message_fr: >-
+      Pathologie respiratoire : prudence avec les benzodiazépines (dépression respiratoire).
+  - id: bzd_on_admission
+    level: info
+    applies_to: treated
+    when:
+      any:
+        - {feature: urine_bzd, op: eq, value: 1}
+        - {feature: prior_bzd_treatment, op: eq, value: 1}
+    message_fr: >-
+      Benzodiazépines déjà présentes à l'admission : tenir compte d'une tolérance et du
+      risque de surdosage.
+  - id: hyponatremia
+    level: warning
+    applies_to: all
+    when: {feature: sodium, op: lt, value: 130}
+    message_fr: >-
+      Hyponatrémie : risque accru de convulsion ; correction prudente recommandée.

@@ -1,0 +1,8 @@
+# Généré par scripts/export_vercel.py : mêmes versions que l'entraînement.
+numpy==2.5.3
+scipy==1.18.1
+pandas==3.0.6
+scikit-learn==1.9.1
+joblib==1.6.0
+pydantic==2.13.5
+PyYAML==6.0.3

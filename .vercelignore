@@ -1,0 +1,7 @@
+# Ce dossier est envoyé tel quel à Vercel par « vercel deploy » (lancé depuis vercel/).
+# Le modèle (model/) et le paquet copié (sevrage_ai/) DOIVENT partir : ne pas les ignorer.
+dev_server.py
+README.md
+**/__pycache__
+**/*.pyc
+.vercel

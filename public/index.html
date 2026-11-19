@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sevrage IA · démonstration</title>
+  <meta name="description" content="Démonstration d’un outil de recherche qui anticipe la gravité d’un sevrage d’alcool et le traitement habituel, à partir d’un patient imaginaire.">
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&amp;family=Nunito+Sans:wght@400;600;700&amp;display=swap">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Projet Challenge IA · Master 2</p>
+      <h1>Anticiper le sevrage d’alcool</h1>
+      <p class="intro" id="intro">Chargement…</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="notices" id="notices" aria-label="Avertissements"></div>
+
+    <div class="layout">
+      <section class="panel" aria-labelledby="form-title">
+        <h2 id="form-title">1. Votre patient (imaginaire)</h2>
+        <p class="hint">Renseignez ce que l’on sait de lui à son arrivée. Ce que vous ignorez, laissez-le sur « Je ne sais pas » : le modèle fera avec, mais sera moins sûr de lui.</p>
+        <div class="actions">
+          <button type="button" id="example">Prendre un patient fictif</button>
+          <button type="button" id="clear" class="ghost">Tout effacer</button>
+        </div>
+        <form id="form" novalidate>
+          <div id="groups"></div>
+          <button type="submit" class="primary" id="submit">Voir ce qu’en pense le modèle</button>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="results-title">
+        <h2 id="results-title">2. Ce qu’en pense le modèle</h2>
+        <div id="results" aria-live="polite">
+          <div class="empty">
+            <p><strong>Rien à afficher pour l’instant.</strong></p>
+            <p>Remplissez le formulaire, ou cliquez sur « Prendre un patient fictif », puis sur « Voir ce qu’en pense le modèle ».</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <details class="extra" id="guide">
+      <summary>Comment lire les résultats ?</summary>
+      <div class="guide-items" id="guide-body"></div>
+    </details>
+    <details class="extra" id="perf" hidden>
+      <summary>Que vaut ce modèle ?</summary>
+      <div id="perf-body"></div>
+    </details>
+  </main>
+
+  <footer class="wrap footer">
+    <p>Outil de recherche, pas un dispositif médical. Aucune donnée de patient n’est hébergée sur ce site : il ne contient que le modèle.</p>
+  </footer>
+  <noscript><p class="wrap">Cette page a besoin de JavaScript pour fonctionner.</p></noscript>
+</body>
+</html>
