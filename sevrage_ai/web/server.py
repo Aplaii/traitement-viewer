@@ -16,7 +16,7 @@ from typing import ClassVar, Final
 from sevrage_ai.logging_config import get_logger
 from sevrage_ai.web.service import MAX_BODY_BYTES, Response, WebService, handle, json_response
 
-__all__ = ["SECURITY_HEADERS", "ApiHandler", "make_handler", "service_loader"]
+__all__ = ["SECURITY_HEADERS", "ApiHandler", "ServiceLoader", "make_handler", "service_loader"]
 
 _LOGGER = get_logger(__name__)
 SECURITY_HEADERS: Final[tuple[tuple[str, str], ...]] = (
@@ -26,20 +26,34 @@ SECURITY_HEADERS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 
-def service_loader(model_path: Path) -> Callable[[], WebService | None]:
-    """Lazy, cached loader of the service of ``model_path`` (``None`` if unreadable)."""
-    cache: dict[str, WebService | None] = {}
+class ServiceLoader:
+    """Lazy, cached loader of the service of ``model_path`` (``None`` while unreadable).
 
-    def load() -> WebService | None:
-        if "service" not in cache:
+    ``failure`` is the type of the last loading error (no message): the page shows it, to
+    help diagnose a deployment. The full message goes to the server log (no patient data:
+    the web model holds none).
+    """
+
+    def __init__(self, model_path: Path) -> None:
+        self.model_path = model_path
+        self.failure: str | None = None
+        self._service: WebService | None = None
+
+    def __call__(self) -> WebService | None:
+        """The service, loaded on the first call (retried while it fails)."""
+        if self._service is None:
             try:
-                cache["service"] = WebService.from_model_file(model_path)
+                self._service = WebService.from_model_file(self.model_path)
+                self.failure = None
             except Exception as exc:  # unreadable model: answered 503, retried next time
-                _LOGGER.error("Modèle web illisible (%s).", type(exc).__name__)
-                return None
-        return cache["service"]
+                self.failure = type(exc).__name__
+                _LOGGER.error("Modèle web illisible (%s : %s).", self.failure, str(exc)[:300])
+        return self._service
 
-    return load
+
+def service_loader(model_path: Path) -> ServiceLoader:
+    """Lazy, cached loader of the service of ``model_path``."""
+    return ServiceLoader(model_path)
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -66,7 +80,9 @@ class ApiHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self, method: str, body: bytes) -> Response:
         try:
-            return handle(type(self).load_service(), method, self.path, body)
+            loader = type(self).load_service
+            service = loader()
+            return handle(service, method, self.path, body, cause=getattr(loader, "failure", None))
         except Exception as exc:  # never show internals (or values) to the page
             _LOGGER.error("Erreur interne de la version web (%s).", type(exc).__name__)
             return json_response(500, {"error": "Erreur interne : réessayez plus tard."})

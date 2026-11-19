@@ -461,13 +461,26 @@ class WebService:
         }
 
 
-def handle(service: WebService | None, method: str, target: str, body: bytes) -> Response:
-    """Answer one request of the page (``target`` = request path, query string allowed)."""
+def handle(
+    service: WebService | None,
+    method: str,
+    target: str,
+    body: bytes,
+    *,
+    cause: str | None = None,
+) -> Response:
+    """Answer one request of the page (``target`` = request path, query string allowed).
+
+    ``cause`` names why the model is unavailable (an exception type), shown with the 503.
+    """
     path = urlsplit(target).path.rstrip("/")
     if path not in (CONFIG_ROUTE, PREDICT_ROUTE):
         return json_response(404, {"error": "Page introuvable."})
     if service is None:
-        return json_response(503, {"error": "Le modèle n'est pas disponible pour le moment."})
+        details = [f"Cause technique : {cause}"] if cause else []
+        return json_response(
+            503, {"error": "Le modèle n'est pas disponible pour le moment.", "details": details}
+        )
     if path == CONFIG_ROUTE:
         if method != "GET":
             return json_response(405, {"error": "Méthode non autorisée."})

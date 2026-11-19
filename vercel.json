@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app.py": {
+      "includeFiles": "{model/**,public/**,sevrage_ai/**}",
+      "maxDuration": 60
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",

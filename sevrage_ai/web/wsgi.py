@@ -78,7 +78,8 @@ def make_app(model_path: Path, public: Path) -> WsgiApp:
         if body is None:
             return json_response(413, {"error": "Requête trop volumineuse."})
         try:
-            return handle(load(), method, path, body)
+            service = load()
+            return handle(service, method, path, body, cause=load.failure)
         except Exception as exc:  # never show internals (or values) to the page
             _LOGGER.error("Erreur interne de la version web (%s).", type(exc).__name__)
             return json_response(500, {"error": "Erreur interne : réessayez plus tard."})
