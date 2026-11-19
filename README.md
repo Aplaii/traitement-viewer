@@ -13,7 +13,9 @@ de patient.
 ## Contenu
 
 - `public/` : la page (HTML, CSS, JavaScript) et `config.json` (textes et formulaire).
-- `api/predict.py` : la fonction Python de Vercel qui calcule la prédiction.
+- `app.py` : le point d'entrée de Vercel, une application Python (WSGI) qui sert la page et
+  calcule la prédiction (`/api/predict`).
+- `api/predict.py` : la même API pour l'ancien mode « un fichier par fonction » de Vercel.
 - `model/` : le modèle de démonstration.
 - `sevrage_ai/` : la partie du paquet nécessaire à la prédiction (copie générée).
 - `requirements.txt` et `.python-version` : les versions exactes, nécessaires pour relire le

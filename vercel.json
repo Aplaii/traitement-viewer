@@ -1,12 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/predict.py": {
-      "includeFiles": "{model/**,sevrage_ai/**}",
-      "excludeFiles": "{public/**,**/__pycache__/**,**/*.pyc}",
-      "maxDuration": 30
-    }
-  },
   "headers": [
     {
       "source": "/(.*)",
